@@ -259,3 +259,4 @@ if run_analysis:
         * **HFRR Wear Scar Diameter:** ASTM D975 / EN 590 diesel standards require a High-Frequency Reciprocating Rig (HFRR) wear scar diameter below **460 µm**. Your blend shows an estimated wear scar of **{analytics['hfrr_wear_scar_um']:.1f} µm** (Wear Risk: **{analytics['wear_risk']}**).
         * **Recommendation:** **{analytics['wear_description']}** Adding commercial biodiesel (FAME) at 1–2% or a specialized lubricity additive completely mitigates this risk.
         """)
+        
