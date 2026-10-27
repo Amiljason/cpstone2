@@ -1,6 +1,9 @@
 import os
 from google import genai
 from google.genai import types
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def get_agent_response(chat_history, user_message, live_telemetry_context):
     key = os.environ.get("GEMINI_API_KEY")
