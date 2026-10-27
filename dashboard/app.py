@@ -6,11 +6,13 @@ import pandas as pd
 import torch
 import joblib
 
-# Add src/ to path
+# Add src/ directory to system path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 from model import DieselPINN
 from dataset import FEATURE_COLS, TARGET_COL
 from engine_analytics import compute_engine_analytics
+from recommendations import generate_recommendations
+from ai_agent import get_agent_response
 
 # Page Configuration
 st.set_page_config(
@@ -23,7 +25,7 @@ st.set_page_config(
 st.markdown("""
 <style>
     .metric-box {
-        padding: 18px;
+        padding: 16px;
         background-color: #1e2130;
         border-radius: 8px;
         border-left: 5px solid #0d6efd;
@@ -37,17 +39,28 @@ st.markdown("""
         margin-bottom: 4px;
     }
     .metric-value {
-        font-size: 1.6rem;
+        font-size: 1.5rem;
         font-weight: 700;
         color: #f8f9fa;
     }
     .metric-delta {
-        font-size: 0.9rem;
+        font-size: 0.85rem;
         font-weight: 500;
     }
     .delta-neg { color: #ea868f; }
     .delta-pos { color: #75b798; }
     .delta-warn { color: #ffda6a; }
+    
+    .rec-card {
+        padding: 14px 18px;
+        border-radius: 8px;
+        margin-bottom: 10px;
+        background-color: #212529;
+    }
+    .rec-crit { border-left: 5px solid #dc3545; }
+    .rec-high { border-left: 5px solid #fd7e14; }
+    .rec-mod  { border-left: 5px solid #ffc107; }
+    .rec-norm { border-left: 5px solid #198754; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -78,20 +91,18 @@ df = load_dataset()
 
 # --- HEADER ---
 st.title("🚜 Diesel-Isobutanol PINN Diagnostic & Telemetry Suite")
-st.caption("Physics-Informed Neural Network (PINN) for Compression-Ignition blend fraction determination and thermochemical stress diagnostics.")
+st.caption("Physics-Informed Neural Network (PINN) for Compression-Ignition blend determination, longevity diagnostics & AI copilot.")
 st.markdown("---")
 
-# --- SIDEBAR CONTROLS ---
-st.sidebar.header("Telemetry Source")
+# --- SIDEBAR: TELEMETRY SELECTOR ---
+st.sidebar.header("1. Telemetry Preset Loader")
 mode = st.sidebar.radio("Input Mode:", ["Dataset Record Lookup", "Manual Custom Input"])
 
 actual_blend = None
 
 if mode == "Dataset Record Lookup" and df is not None:
-    st.sidebar.markdown(f"**Records Available:** `{len(df)}` rows")
-    row_idx = st.sidebar.number_input("Select Dataset Row Index", min_value=0, max_value=len(df)-1, value=2, step=1)
-    
-    # Direct read from dataset
+    st.sidebar.caption(f"Records Available: `{len(df)}` rows")
+    row_idx = st.sidebar.number_input("Dataset Row Index", min_value=0, max_value=len(df)-1, value=2, step=1)
     row_data = df.iloc[row_idx]
     default_rpm = float(row_data['engine_rpm'])
     default_load = float(row_data['engine_load'])
@@ -117,16 +128,64 @@ with col3:
 with col4:
     tau_ms = st.number_input("Ignition Delay τ (ms)", min_value=0.20, max_value=10.0, value=default_tau, step=0.05)
 
-# --- PINN PREDICTION ---
+# --- PINN INFERENCE ---
 input_array = np.array([[rpm, load, fuel_flow, tau_ms]])
 scaled_input = scaler.transform(input_array)
 with torch.no_grad():
     raw_pred = model(torch.tensor(scaled_input, dtype=torch.float32)).item()
 predicted_blend = max(0.0, float(raw_pred))
 
+# Precompute analytics for continuous live state
+analytics = compute_engine_analytics(predicted_blend, rpm, load, fuel_flow, tau_ms)
+
+# --- SIDEBAR: AI DIAGNOSTIC AGENT ---
+st.sidebar.markdown("---")
+st.sidebar.header("🤖 AI Diagnostic Copilot")
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = [
+        {"role": "assistant", "content": "Hello! I am your Diesel Powertrain Copilot. Ask me anything about your current blend, emissions, or component wear."}
+    ]
+
+# Display conversation in sidebar container
+sidebar_chat_box = st.sidebar.container(height=320)
+for chat in st.session_state.chat_history:
+    if chat["role"] == "user":
+        sidebar_chat_box.chat_message("user").write(chat["content"])
+    else:
+        sidebar_chat_box.chat_message("assistant").write(chat["content"])
+
+user_prompt = st.sidebar.chat_input("Ask about wear, additives, or performance...")
+
+if user_prompt:
+    st.session_state.chat_history.append({"role": "user", "content": user_prompt})
+    sidebar_chat_box.chat_message("user").write(user_prompt)
+
+    live_context = {
+        "rpm": rpm,
+        "load": load,
+        "fuel_flow": fuel_flow,
+        "tau_ms": tau_ms,
+        "predicted_blend": predicted_blend,
+        "mileage_loss": analytics['mileage_loss_pct'],
+        "soot_reduction": analytics['soot_reduction_pct'],
+        "nox_shift": analytics['nox_shift_pct'],
+        "dp_dtheta": analytics['dp_dtheta_mpa_deg'],
+        "stress_level": analytics['stress_level'],
+        "hfrr_wear_scar": analytics['hfrr_wear_scar_um'],
+        "wear_risk": analytics['wear_risk'],
+        "cetane": analytics['blended_cetane']
+    }
+
+    with sidebar_chat_box.chat_message("assistant"):
+        with st.spinner("Analyzing telemetry physics..."):
+            reply = get_agent_response(st.session_state.chat_history, user_prompt, live_context)
+            st.write(reply)
+            st.session_state.chat_history.append({"role": "assistant", "content": reply})
+
 st.markdown("---")
 
-# --- SECTION 2: BLEND DETERMINATION (ACTUAL BESIDE PREDICTED) ---
+# --- SECTION 2: BLEND DETERMINATION ---
 st.subheader("2. Fuel Blend Determination")
 col_p1, col_p2, col_p3 = st.columns(3)
 
@@ -153,8 +212,8 @@ st.markdown("---")
 st.subheader("3. Comprehensive Analytical Diagnostics")
 run_analysis = st.button("🚀 Analyze Engine Diagnostics", type="primary", use_container_width=True)
 
-if run_analysis:
-    analytics = compute_engine_analytics(predicted_blend, rpm, load, fuel_flow, tau_ms)
+if run_analysis or 'analyzed' in st.session_state:
+    st.session_state.analyzed = True
     
     st.markdown("#### Performance, Emissions & Mechanical Stress Matrix")
     
@@ -229,34 +288,63 @@ if run_analysis:
         </div>
         """, unsafe_allow_html=True)
 
-    # --- SECTION 4: DETAILED EXPLANATIONS ---
+    # --- SECTION 4: ENGINE LONGEVITY & RECOMMENDATIONS ---
     st.markdown("---")
-    st.subheader("4. Detailed Metric Explanations & Physical Insights")
+    st.subheader("4. Engine Longevity & Preventive Maintenance Recommendations")
 
-    with st.expander("⛽ 1. Mileage Drop & BSFC Increase (Thermodynamics of Lower Heating Value)", expanded=True):
+    recs = generate_recommendations(analytics)
+
+    for r in recs:
+        priority_class = "rec-crit" if r["priority"] == "CRITICAL" else (
+            "rec-high" if r["priority"] == "HIGH" else (
+                "rec-mod" if r["priority"] in ["MODERATE", "RECOMMENDED"] else "rec-norm"
+            )
+        )
+        badge_color = "#dc3545" if r["priority"] == "CRITICAL" else (
+            "#fd7e14" if r["priority"] == "HIGH" else (
+                "#ffc107" if r["priority"] in ["MODERATE", "RECOMMENDED"] else "#198754"
+            )
+        )
+        st.markdown(f"""
+        <div class="rec-card {priority_class}">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span style="font-weight: 700; font-size: 1.05rem; color: #f8f9fa;">{r['title']}</span>
+                <span style="background-color: {badge_color}; color: #000; font-size: 0.75rem; font-weight: 800; padding: 2px 8px; border-radius: 4px;">
+                    {r['priority']}
+                </span>
+            </div>
+            <div style="font-size: 0.85rem; color: #adb5bd; margin-bottom: 6px;"><b>Category:</b> {r['category']}</div>
+            <div style="font-size: 0.95rem; color: #dee2e6;">{r['action']}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # --- SECTION 5: DETAILED TECHNICAL INSIGHTS ---
+    st.markdown("---")
+    st.subheader("5. Detailed Metric Explanations & Physical Insights")
+
+    with st.expander("⛽ 1. Mileage Drop & BSFC Increase (Thermodynamics of Lower Heating Value)", expanded=False):
         st.markdown(f"""
         * **What it means:** Neat ultra-low sulfur diesel (ULSD) has a Lower Heating Value (LHV) of **42.6 MJ/kg** and density of **832 kg/m³**, delivering **~35.44 MJ of energy per liter**. Isobutanol has an LHV of **33.3 MJ/kg** and density of **802 kg/m³** (~26.71 MJ/L).
         * **The Result:** At your predicted blend of **{predicted_blend:.2f}% isobutanol**, the blended volumetric energy density decreases, resulting in an expected mileage penalty of **{analytics['mileage_loss_pct']:.2f}%**.
         * **Engine Controller (ECU) Response:** To produce equivalent brake torque and maintain vehicle speed, the ECU extends the injection pulse-width, causing Brake Specific Fuel Consumption (BSFC) to increase by **{analytics['bsfc_increase_pct']:.2f}%**.
         """)
 
-    with st.expander("💨 2. Emissions Profile (Soot-NOx Trade-Off Dynamics)", expanded=True):
+    with st.expander("💨 2. Emissions Profile (Soot-NOx Trade-Off Dynamics)", expanded=False):
         st.markdown(f"""
         * **Soot / PM Reduction (-{analytics['soot_reduction_pct']:.1f}%):** Isobutanol ($C_4H_{{10}}O$) incorporates **~21.6% fuel-bound oxygen by weight**. In compression-ignition engines, soot typically forms in local, fuel-rich diffusion flame cores. The presence of oxygen inside the injected droplets promotes in-cylinder soot oxidation and suppresses polycyclic aromatic hydrocarbon (PAH) precursors, substantially cutting tailpipe smoke and particulate emissions.
         * **NOx Shift (+{analytics['nox_shift_pct']:.1f}%):** Isobutanol depresses the blend's cetane number from 51 down to **{analytics['blended_cetane']:.1f}**. A lower cetane number extends the ignition delay ($\\tau_{{id}}$), allowing more fuel to vaporize and premix with air before auto-ignition occurs. Once combustion initiates, the combustion of this larger premixed mass drives high local heat-release rates and peak flame temperatures, slightly increasing thermal $NO_x$ formation via the extended Zeldovich mechanism.
         """)
 
-    with st.expander("⚙️ 3. Mechanical Stress & Combustion Roughness ($dP/d\\theta$)", expanded=True):
+    with st.expander("⚙️ 3. Mechanical Stress & Combustion Roughness ($dP/d\\theta$)", expanded=False):
         st.markdown(f"""
         * **Combustion Noise & Peak Pressure Rise:** The estimated pressure rise rate is **{analytics['dp_dtheta_mpa_deg']:.3f} MPa/deg**. Standard diesel engines run smoothly between **0.40 and 0.60 MPa/deg**.
         * **Current Assessment:** **{analytics['stress_description']}**
         * **Mechanical Impact:** When ignition delay is stretched, rapid combustion of the premixed charge creates steep pressure gradients ($dP/d\\theta$). If this exceeds 0.85 MPa/deg, the resulting mechanical shock creates harsh acoustic diesel knock and exerts elevated peak loads on connecting rod small-end bushings, piston crowns, and wrist pins.
         """)
 
-    with st.expander("🛡️ 4. Fuel System Lubricity & High-Pressure Fuel Pump (HPFP) Longevity", expanded=True):
+    with st.expander("🛡️ 4. Fuel System Lubricity & High-Pressure Fuel Pump (HPFP) Longevity", expanded=False):
         st.markdown(f"""
         * **Lubricity & Boundary Film Deficit:** High-pressure common rail fuel pumps (Bosch CP4, Denso HP3/4) rely on the fuel itself for internal lubrication under extreme operating pressures ($1,600 - 2,200\\text{{ bar}}$).
         * **HFRR Wear Scar Diameter:** ASTM D975 / EN 590 diesel standards require a High-Frequency Reciprocating Rig (HFRR) wear scar diameter below **460 µm**. Your blend shows an estimated wear scar of **{analytics['hfrr_wear_scar_um']:.1f} µm** (Wear Risk: **{analytics['wear_risk']}**).
         * **Recommendation:** **{analytics['wear_description']}** Adding commercial biodiesel (FAME) at 1–2% or a specialized lubricity additive completely mitigates this risk.
         """)
-        
