@@ -43,10 +43,10 @@ def get_agent_response(chat_history, user_message, live_telemetry_context):
     
     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=user_message)]))
 
-    configured_model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-    models_to_try = [configured_model, "gemini-2.5-flash-lite"]
+    configured_model = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+    models_to_try = [configured_model, "gemini-3.5-flash"]
     
-    last_err = None
+    errors = []
 
     for m in models_to_try:
         try:
@@ -60,7 +60,7 @@ def get_agent_response(chat_history, user_message, live_telemetry_context):
             )
             return response.text
         except Exception as e:
-            last_err = e
+            errors.append(f"{m}: {e}")
             continue
 
-    return f"Error contacting AI Agent: {str(last_err)}"
+    return "Error contacting AI Agent: " + " | ".join(errors)
