@@ -40,12 +40,8 @@ def get_agent_response(chat_history, user_message, live_telemetry_context):
     
     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=user_message)]))
 
-    # Requested by the endpoint error message directly
-    models_to_try = [
-        "gemini-3.8-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-pro"
-    ]
+    configured_model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    models_to_try = [configured_model, "gemini-2.5-flash-lite"]
     
     last_err = None
 
